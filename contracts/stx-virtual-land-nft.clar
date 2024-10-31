@@ -84,3 +84,73 @@
             })
         (var-set last-token-id token-id)
         (ok token-id)))
+
+
+(define-public (list-virtual-land-for-rent (token-id uint) (price uint))
+    (let ((token-owner (unwrap! (get-owner token-id) err-token-not-found)))
+        (begin
+            ;; Check if sender is token owner
+            (asserts! (is-eq tx-sender token-owner) err-not-token-owner)
+
+            ;; Get current rental details
+            (match (map-get? rental-details { token-id: token-id })
+                rental 
+                    (begin
+                        ;; Check if not already rented
+                        (asserts! (is-none (get tenant rental)) err-already-rented)
+                        ;; Update rental details
+                        (map-set rental-details
+                            { token-id: token-id }
+                            {
+                                tenant: none,
+                                rental-start: none,
+                                rental-end: none,
+                                rental-price: (some price)
+                            })
+                        (ok true))
+                ;; If no rental details exist, create new entry
+                (begin
+                    (map-set rental-details
+                        { token-id: token-id }
+                        {
+                            tenant: none,
+                            rental-start: none,
+                            rental-end: none,
+                            rental-price: (some price)
+                        })
+                    (ok true))))))
+
+
+(define-public (rent-virtual-land (token-id uint) (rental-period uint))
+    (let (
+        (token-owner (unwrap! (get-owner token-id) err-token-not-found))
+        (rental (unwrap! (map-get? rental-details { token-id: token-id }) err-token-not-found))
+        (price (unwrap! (get rental-price rental) err-token-not-found))
+        (current-block-height block-height)  ;; block-height is already a uint
+        (rental-end-height (+ block-height rental-period))
+    )
+        (begin
+            ;; Check if land is not already rented
+            (asserts! (is-none (get tenant rental)) err-already-rented)
+
+            ;; Validate rental period
+            (asserts! (> rental-period u0) err-invalid-rental-period)
+
+            ;; Optional: Add maximum rental period check
+            (asserts! (<= rental-period MAX-RENTAL-PERIOD) err-exceeds-max-rental)
+
+            ;; Check if price is valid
+            (asserts! (> price u0) err-invalid-price)
+
+            ;; Transfer rental payment in STX
+            (try! (stx-transfer? price tx-sender token-owner))
+
+            ;; Update rental details
+            (ok (map-set rental-details
+                { token-id: token-id }
+                {
+                    tenant: (some tx-sender),
+                    rental-start: (some current-block-height),
+                    rental-end: (some rental-end-height),
+                    rental-price: (some price)
+                })))))
